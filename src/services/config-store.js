@@ -30,7 +30,8 @@ class ConfigStore {
       selectedCalendarIds: Array.isArray(this.data.selectedCalendarIds) ? this.data.selectedCalendarIds : [],
       calendarSelectionInitialized: this.data.calendarSelectionInitialized === true ||
         (this.data.calendarSelectionInitialized === undefined && Array.isArray(this.data.selectedCalendarIds)),
-      viewMode: this.data.viewMode === 'week' ? 'week' : 'today'
+      viewMode: this.data.viewMode === 'week' ? 'week' : 'today',
+      showCompletedEvents: this.data.showCompletedEvents === true
     };
   }
 
@@ -38,6 +39,7 @@ class ConfigStore {
     if (Array.isArray(next.selectedCalendarIds)) this.data.selectedCalendarIds = next.selectedCalendarIds;
     if (typeof next.calendarSelectionInitialized === 'boolean') this.data.calendarSelectionInitialized = next.calendarSelectionInitialized;
     if (['today', 'week'].includes(next.viewMode)) this.data.viewMode = next.viewMode;
+    if (typeof next.showCompletedEvents === 'boolean') this.data.showCompletedEvents = next.showCompletedEvents;
     this.save();
     return this.getPublicSettings();
   }

@@ -30,3 +30,19 @@ test('старый сохранённый пустой выбор не сбра�
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('режим показа выполненных по умолчанию выключен и сохраняется после перезапуска', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'calendar-tray-show-completed-'));
+  try {
+    const store = new ConfigStore(directory, {});
+    assert.equal(store.getPublicSettings().showCompletedEvents, false);
+    store.setPublicSettings({ showCompletedEvents: true });
+    assert.equal(new ConfigStore(directory, {}).getPublicSettings().showCompletedEvents, true);
+    store.setPublicSettings({ viewMode: 'week' });
+    assert.equal(new ConfigStore(directory, {}).getPublicSettings().showCompletedEvents, true);
+    store.setPublicSettings({ showCompletedEvents: false });
+    assert.equal(new ConfigStore(directory, {}).getPublicSettings().showCompletedEvents, false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

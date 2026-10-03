@@ -51,9 +51,11 @@
         <button id="nextDateButton" class="icon-button surface" type="button" aria-label="Следующий день" title="Следующий день">›</button>
       </div>
       <div class="date-shortcut"><button id="jumpTodayButton" class="jump-today hidden" type="button">К сегодня</button></div>
+      <label id="showAllEventsOption" class="show-all-events hidden"><input id="showAllEvents" type="checkbox"><span>Показать все события</span><small>включая выполненные</small></label>
       <div id="loadingState" class="loading hidden"><span class="spinner"></span>Загрузка событий…</div>
       <div id="errorState" class="error hidden"></div>
-      <div id="eventsList" class="events-list"></div>
+      <div id="eventsList" class="events-list" aria-label="Календарь по времени"></div>
+      <div id="timelineHelp" class="timeline-help hidden" role="status" aria-live="polite">Перетащите событие для переноса; нижний край — для изменения длительности. Шаг — 15 минут.</div>
       <div id="emptyState" class="empty hidden">
         <div class="empty-mark">✓</div>
         <strong id="emptyTitle">Свободно</strong>
@@ -185,6 +187,8 @@
   </div>
   <script src="../lib/contact-utils.js"></script>
   <script src="../lib/calendar-utils.js"></script>
+  <script src="../lib/timeline-utils.js"></script>
+  <script src="timeline.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

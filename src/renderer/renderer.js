@@ -2,7 +2,7 @@
 
 const state = {
   auth: { credentialsConfigured: false, signedIn: false },
-  settings: { selectedCalendarIds: [], calendarSelectionInitialized: false, viewMode: 'today' },
+  settings: { selectedCalendarIds: [], calendarSelectionInitialized: false, viewMode: 'today', showCompletedEvents: false },
   calendars: [],
   events: [],
   archivedEvents: [],
@@ -27,6 +27,7 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 let toastTimer;
 let eventsRequestId = 0;
 let editorSnapshot = '';
+let completedEventEntries = new Map();
 
 function pad(value) { return String(value).padStart(2, '0'); }
 function localDate(date) { return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`; }
@@ -45,6 +46,7 @@ function messageFrom(error) {
 }
 
 function showPage(name) {
+  cancelTimelineGesture();
   $$('.page').forEach((page) => page.classList.add('hidden'));
   $(`#${name}Page`).classList.remove('hidden');
   if (name === 'settings') renderSettings();
@@ -268,6 +270,7 @@ function jumpToToday() {
 
 function calendarById(id) { return state.calendars.find((calendar) => calendar.id === id); }
 function eventKey(calendarId, eventId) { return JSON.stringify([calendarId, eventId]); }
+function completedEntryFor(event) { return completedEventEntries.get(eventKey(event.calendarId, event.id)); }
 function completedForVisiblePeriod() {
   const { start, end } = getRange();
   return window.CalendarUtils.archivedEventsInRange(state.archivedEvents, start, end);
@@ -285,50 +288,39 @@ function renderEvents() {
   updateHeading();
   renderArchiveCount();
   const list = $('#eventsList');
-  list.replaceChildren();
-  const archivedKeys = new Set(state.archivedEvents.map((entry) => eventKey(entry.calendarId, entry.eventId)));
-  const visibleEvents = state.events.filter((event) => !archivedKeys.has(eventKey(event.calendarId, event.id)));
+  completedEventEntries = new Map(state.archivedEvents.map((entry) => [eventKey(entry.calendarId, entry.eventId), entry]));
+  const visibleEvents = state.events.filter((event) => event.status !== 'cancelled' && (state.settings.showCompletedEvents || !completedEntryFor(event)));
+  $('#showAllEvents').checked = state.settings.showCompletedEvents === true;
   $('#loadingState').classList.toggle('hidden', !state.loading);
-  $('#emptyState').classList.toggle('hidden', state.loading || visibleEvents.length > 0 || !state.auth.signedIn);
   const noSelection = state.settings.selectedCalendarIds.length === 0;
+  const showTimeline = state.auth.signedIn && !noSelection;
+  $('#emptyState').classList.toggle('hidden', state.loading || showTimeline || !state.auth.signedIn);
   $('#emptyTitle').textContent = noSelection ? 'Выберите календарь' : 'Свободно';
   $('#emptyDescription').textContent = noSelection ? 'Отметьте нужные календари выше' : 'В этом периоде событий нет';
+  $('#timelineHelp').classList.toggle('hidden', !showTimeline);
+  list.classList.toggle('is-loading', state.loading);
+  list.setAttribute('aria-busy', String(state.loading || state.mutationInProgress));
   if (state.loading) return;
-
-  const groups = new Map();
-  for (const event of visibleEvents) {
-    const start = new Date(event.start.dateTime || `${event.start.date}T00:00:00`);
-    const key = localDate(start);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(event);
-  }
-
-  for (const [, events] of groups) {
-    const group = document.createElement('section');
-    group.className = 'day-group';
-    if (state.settings.viewMode === 'week') {
-      const date = new Date(events[0].start.dateTime || `${events[0].start.date}T00:00:00`);
-      const label = document.createElement('div');
-      label.className = 'day-label';
-      label.textContent = new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }).format(date);
-      group.append(label);
-    }
-    for (const event of events) group.append(createEventCard(event));
-    list.append(group);
-  }
+  if (showTimeline) renderTimeline(visibleEvents);
+  else { cancelTimelineGesture(); list.replaceChildren(); delete list.dataset.rangeKey; }
 }
 
 function createEventCard(event) {
   const calendar = calendarById(event.calendarId);
-  const writable = ['owner', 'writer'].includes(calendar?.accessRole);
+  const completedEntry = completedEntryFor(event);
+  const writable = !completedEntry && ['owner', 'writer'].includes(calendar?.accessRole);
   const hasDescription = typeof event.description === 'string' && event.description.trim().length > 0;
   const row = document.createElement('div');
   row.className = 'event-row';
+  row.classList.toggle('completed-event', Boolean(completedEntry));
+  row.dataset.eventId = event.id;
+  row.dataset.calendarId = event.calendarId;
   const card = document.createElement(writable ? 'button' : 'div');
   card.className = 'event-card';
   card.classList.toggle('readonly', !writable);
   card.classList.toggle('has-description', hasDescription);
-  card.title = `${writable ? 'ЛКМ: открыть · ПКМ: действия' : 'Календарь доступен только для чтения'}${hasDescription ? ' · Есть описание' : ''}`;
+  card.classList.toggle('completed-card', Boolean(completedEntry));
+  card.title = `${completedEntry ? 'Выполнено · Нажмите ↶, чтобы вернуть на таймлайн' : writable ? 'ЛКМ: открыть · ПКМ: действия' : 'Календарь доступен только для чтения'}${hasDescription ? ' · Есть описание' : ''}`;
   const color = document.createElement('span');
   color.className = 'event-color';
   color.style.backgroundColor = calendar?.backgroundColor || '#1a73e8';
@@ -346,7 +338,8 @@ function createEventCard(event) {
   copy.append(title, meta);
   card.append(color, time, copy);
   if (writable) {
-    card.addEventListener('click', () => openEditor(event));
+    card.type = 'button';
+    card.addEventListener('click', () => { if (!state.mutationInProgress && !state.loading) openEditor(event); });
     card.addEventListener('contextmenu', (mouseEvent) => {
       mouseEvent.preventDefault();
       openEventContextMenu(event, card, mouseEvent.clientX, mouseEvent.clientY);
@@ -355,11 +348,13 @@ function createEventCard(event) {
   const complete = document.createElement('button');
   complete.type = 'button';
   complete.className = 'complete-button';
-  complete.textContent = '✓';
+  complete.classList.toggle('restore-button', Boolean(completedEntry));
+  complete.textContent = completedEntry ? '↶' : '✓';
   complete.disabled = !state.archiveAccountId;
-  complete.title = complete.disabled ? 'Архив недоступен: не найден основной календарь' : 'Отметить выполненным и отправить в архив';
-  complete.setAttribute('aria-label', `Отметить выполненным: ${event.summary || '(Без названия)'}`);
-  complete.addEventListener('click', () => markCompleted(event, complete));
+  const action = completedEntry ? 'Вернуть на таймлайн' : 'Отметить выполненным';
+  complete.title = complete.disabled ? 'Архив недоступен: не найден основной календарь' : completedEntry ? action : 'Отметить выполненным и отправить в архив';
+  complete.setAttribute('aria-label', `${action}: ${event.summary || '(Без названия)'}`);
+  complete.addEventListener('click', () => completedEntry ? restoreCompleted(completedEntry, complete) : markCompleted(event, complete));
   row.append(card, complete);
   return row;
 }
@@ -604,6 +599,7 @@ function renderConnection() {
   $('#addButton').disabled = writableCalendars().length === 0;
   $('#addButton').title = $('#addButton').disabled ? 'Нет календарей с правом записи' : 'Новое событие';
   $('#archiveButton').classList.toggle('hidden', !state.auth.signedIn || !state.archiveAccountId);
+  $('#showAllEventsOption').classList.toggle('hidden', !state.auth.signedIn);
   renderArchiveCount();
 }
 
@@ -890,6 +886,23 @@ async function deleteEvent() {
 }
 
 async function saveSettings() { await window.calendarApp.saveSettings(state.settings); }
+
+async function toggleAllEvents() {
+  const checkbox = $('#showAllEvents');
+  const previous = state.settings.showCompletedEvents === true;
+  state.settings.showCompletedEvents = checkbox.checked;
+  checkbox.disabled = true;
+  renderEvents();
+  try {
+    await saveSettings();
+  } catch (error) {
+    state.settings.showCompletedEvents = previous;
+    renderEvents();
+    showToast(`Не удалось сохранить режим отображения: ${messageFrom(error)}`);
+  } finally {
+    checkbox.disabled = false;
+  }
+}
 function showError(text) {
   if (!$('#calendarPage').classList.contains('hidden')) {
     $('#errorState').textContent = text;
@@ -938,6 +951,7 @@ async function init() {
 }
 
 function bindEvents() {
+  $('#showAllEvents').addEventListener('change', toggleAllEvents);
   $('#rescheduleMenuItem').addEventListener('click', () => {
     const event = state.contextEvent;
     if (event) openRescheduleDialog(event);

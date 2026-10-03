@@ -77,10 +77,11 @@ function toggleWindow() {
 }
 
 function createWindow() {
+  const work = screen.getPrimaryDisplay().workArea;
   mainWindow = new BrowserWindow({
-    width: 430,
-    height: 660,
-    minWidth: 390,
+    width: Math.min(940, work.width - 16),
+    height: Math.min(820, work.height - 16),
+    minWidth: 600,
     minHeight: 520,
     show: false,
     frame: false,
