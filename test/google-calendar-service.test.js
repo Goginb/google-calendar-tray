@@ -42,3 +42,20 @@ test('календари только для чтения не позволяю�
   await assert.rejects(service.deleteEvent({ calendarId: 'readonly', eventId: 'event-42' }), /только для чтения/);
   assert.deepEqual(calls, [['access', 'readonly'], ['access', 'readonly'], ['access', 'readonly']]);
 });
+
+test('обновление календаря читает все страницы событий и сохраняет принадлежность календарю', async () => {
+  const calls = [];
+  const service = Object.create(GoogleCalendarService.prototype);
+  service.getCalendarApi = () => ({ events: { list: async (args) => {
+    calls.push(args);
+    return { data: args.pageToken
+      ? { items: [{ id: 'second', start: { dateTime: '2026-10-03T12:00:00Z' } }] }
+      : { items: [{ id: 'first', start: { dateTime: '2026-10-03T09:00:00Z' } }], nextPageToken: 'next' } };
+  } } });
+  const range = { calendarIds: ['team'], timeMin: '2026-10-03T00:00:00Z', timeMax: '2026-10-04T00:00:00Z' };
+  const events = await service.listEvents(range);
+  assert.deepEqual(events.map((event) => [event.id, event.calendarId]), [['first', 'team'], ['second', 'team']]);
+  assert.equal(calls[1].pageToken, 'next');
+  assert.equal(calls[1].timeMin, range.timeMin);
+  assert.equal(calls[1].singleEvents, true);
+});

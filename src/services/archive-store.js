@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { entryKey } = require('../lib/completion-records');
 
 class ArchiveStore {
   constructor(userDataPath) {
@@ -35,6 +36,29 @@ class ArchiveStore {
 
   list(accountId) {
     return [...this.accountEntries(accountId)].sort((a, b) => b.archivedAt.localeCompare(a.archivedAt));
+  }
+
+  pendingMigration(accountId) {
+    const entries = this.accountEntries(accountId);
+    const key = Buffer.from(accountId, 'utf8').toString('base64url');
+    if (!this.data.migrations || typeof this.data.migrations !== 'object' || Array.isArray(this.data.migrations)) this.data.migrations = {};
+    if (!Array.isArray(this.data.migrations[key])) {
+      // Freeze the old local archive once; later cloud cache entries aren't migration candidates.
+      this.data.migrations[key] = [...entries];
+      this.save();
+    }
+    return [...this.data.migrations[key]];
+  }
+
+  applyCloud(accountId, completedEntries, knownKeys) {
+    const known = new Set(knownKeys);
+    const pending = this.pendingMigration(accountId).filter((entry) => !known.has(entryKey(entry)));
+    const key = Buffer.from(accountId, 'utf8').toString('base64url');
+    this.data.migrations[key] = pending;
+    const entries = [...completedEntries, ...pending].map(({ completed, origin, updated, recordCalendarId, ...entry }) => entry);
+    this.data.accounts[key] = entries;
+    this.save();
+    return this.list(accountId);
   }
 
   archive(accountId, event) {

@@ -17,6 +17,7 @@ const { ConfigStore } = require('./services/config-store');
 const { ArchiveStore } = require('./services/archive-store');
 const { ContactStore } = require('./services/contact-store');
 const { GoogleCalendarService } = require('./services/google-calendar');
+const { CompletionSync } = require('./services/completion-sync');
 const { createTrayClickActions } = require('./lib/tray-clicks');
 
 let mainWindow;
@@ -26,6 +27,7 @@ let store;
 let archiveStore;
 let contactStore;
 let calendarService;
+let completionSync;
 let trayClicks;
 const TRAY_CLICK_DELAY_MS = 500;
 const GOOGLE_CALENDAR_URL = 'https://calendar.google.com/calendar/';
@@ -97,6 +99,7 @@ function createWindow() {
     }
   });
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  mainWindow.on('show', () => mainWindow.webContents.send('sync-refresh'));
   mainWindow.on('close', (event) => {
     if (!quitting) {
       event.preventDefault();
@@ -156,9 +159,10 @@ function registerIpc() {
   ipcMain.handle('events:create', (_event, args) => calendarService.createEvent(args));
   ipcMain.handle('events:update', (_event, args) => calendarService.updateEvent(args));
   ipcMain.handle('events:delete', (_event, args) => calendarService.deleteEvent(args));
-  ipcMain.handle('archive:list', (_event, accountId) => archiveStore.list(accountId));
-  ipcMain.handle('archive:add', (_event, accountId, event) => archiveStore.archive(accountId, event));
-  ipcMain.handle('archive:restore', (_event, accountId, calendarId, eventId) => archiveStore.restore(accountId, calendarId, eventId));
+  ipcMain.handle('archive:cached', (_event, accountId) => archiveStore.list(accountId));
+  ipcMain.handle('archive:list', (_event, accountId) => completionSync.list(accountId));
+  ipcMain.handle('archive:add', (_event, accountId, event) => completionSync.archive(accountId, event));
+  ipcMain.handle('archive:restore', (_event, accountId, calendarId, eventId) => completionSync.restore(accountId, calendarId, eventId));
   ipcMain.handle('contacts:list', () => contactStore.list());
   ipcMain.handle('contacts:save', (_event, contact) => contactStore.upsert(contact));
   ipcMain.handle('contacts:remember', (_event, emails) => contactStore.remember(emails));
@@ -177,6 +181,7 @@ if (!app.requestSingleInstanceLock()) {
     archiveStore = new ArchiveStore(app.getPath('userData'));
     contactStore = new ContactStore(app.getPath('userData'));
     calendarService = new GoogleCalendarService({ app, shell, store });
+    completionSync = new CompletionSync(calendarService, archiveStore);
     registerIpc();
     createWindow();
     createTray();

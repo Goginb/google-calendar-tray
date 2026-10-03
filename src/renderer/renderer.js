@@ -25,6 +25,7 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 let toastTimer;
+let eventRequestsInFlight = 0;
 let eventsRequestId = 0;
 let editorSnapshot = '';
 let completedEventEntries = new Map();
@@ -410,7 +411,7 @@ function closeRescheduleDialog() {
 async function saveReschedule(event) {
   event.preventDefault();
   if (state.mutationInProgress || !state.reschedulingEvent) return;
-  state.mutationInProgress = true;
+  beginEventMutation();
   const button = $('#rescheduleSaveButton');
   button.disabled = true;
   button.textContent = 'Перенос…';
@@ -481,7 +482,7 @@ function renderArchive() {
 
 async function markCompleted(event, button) {
   if (state.mutationInProgress || !state.archiveAccountId) return;
-  state.mutationInProgress = true;
+  beginEventMutation();
   button.disabled = true;
   try {
     const calendar = calendarById(event.calendarId);
@@ -507,7 +508,7 @@ async function markCompleted(event, button) {
 
 async function restoreCompleted(entry, button) {
   if (state.mutationInProgress || !state.archiveAccountId) return;
-  state.mutationInProgress = true;
+  beginEventMutation();
   button.disabled = true;
   try {
     state.archivedEvents = await window.calendarApp.restoreArchivedEvent(state.archiveAccountId, entry.calendarId, entry.eventId);
@@ -540,7 +541,7 @@ async function loadCalendars() {
     }
     state.archiveAccountId = state.calendars.find((calendar) => calendar.primary)?.id || '';
     try {
-      state.archivedEvents = state.archiveAccountId ? await window.calendarApp.listArchive(state.archiveAccountId) : [];
+      state.archivedEvents = state.archiveAccountId ? await window.calendarApp.listCachedArchive(state.archiveAccountId) : [];
     } catch (error) {
       state.archivedEvents = [];
       showToast(`Не удалось открыть архив: ${messageFrom(error)}`);
@@ -558,36 +559,66 @@ async function loadCalendars() {
   }
 }
 
-async function loadEvents() {
+function beginEventMutation() {
+  ++eventsRequestId;
+  state.loading = false;
+  state.mutationInProgress = true;
+}
+
+function canRefreshInBackground() {
+  return state.auth.signedIn && !eventRequestsInFlight && !state.loading && !state.mutationInProgress &&
+    !activeTimelineGesture && $('#editorPage').classList.contains('hidden') &&
+    $('#rescheduleDialog').classList.contains('hidden') && $('#confirmDialog').classList.contains('hidden');
+}
+
+function refreshFromOtherDevices() {
+  if (canRefreshInBackground()) return loadEvents({ background: true });
+}
+
+async function loadEvents({ background = false } = {}) {
+  if (background && !canRefreshInBackground()) return;
   const requestId = ++eventsRequestId;
+  const accountId = state.archiveAccountId;
   renderConnection();
-  if (!state.auth.signedIn || !state.settings.selectedCalendarIds.length) {
+  if (!state.auth.signedIn) {
     state.loading = false;
     state.events = [];
     hideError();
     renderEvents();
     return;
   }
-  state.loading = true;
-  hideError();
-  renderEvents();
+  ++eventRequestsInFlight;
+  if (!background) {
+    state.loading = true;
+    hideError();
+    renderEvents();
+  }
   try {
     const range = getRange();
-    const events = await window.calendarApp.listEvents({
-      calendarIds: [...state.settings.selectedCalendarIds],
-      timeMin: range.timeMin,
-      timeMax: range.timeMax
-    });
-    if (requestId === eventsRequestId) state.events = events;
+    const [events, archive] = await Promise.allSettled([
+      state.settings.selectedCalendarIds.length ? window.calendarApp.listEvents({
+        calendarIds: [...state.settings.selectedCalendarIds], timeMin: range.timeMin, timeMax: range.timeMax
+      }) : Promise.resolve([]),
+      accountId ? window.calendarApp.listArchive(accountId) : Promise.resolve([])
+    ]);
+    if (requestId !== eventsRequestId || accountId !== state.archiveAccountId ||
+        (background && (state.mutationInProgress || activeTimelineGesture || !$('#editorPage').classList.contains('hidden')))) return;
+    if (events.status === 'fulfilled') state.events = events.value;
+    if (archive.status === 'fulfilled') state.archivedEvents = archive.value;
+    if (events.status === 'rejected') showError(messageFrom(events.reason));
+    else if (archive.status === 'rejected') showError(`Не удалось синхронизировать «Выполнено»: ${messageFrom(archive.reason)}`);
+    else hideError();
+    renderEvents();
+    renderArchive();
   } catch (error) {
     if (requestId === eventsRequestId) {
       showError(messageFrom(error));
-      state.events = [];
     }
   } finally {
+    --eventRequestsInFlight;
     if (requestId === eventsRequestId) {
       state.loading = false;
-      renderEvents();
+      if (!background) { renderEvents(); renderArchive(); }
     }
   }
 }
@@ -824,7 +855,7 @@ function buildResource() {
 async function saveEvent(event) {
   event.preventDefault();
   if (state.mutationInProgress) return;
-  state.mutationInProgress = true;
+  beginEventMutation();
   hideFormError();
   const wasEditing = Boolean(state.editingEvent);
   const button = $('#saveEventButton'); button.disabled = true; button.textContent = 'Сохранение…';
@@ -863,7 +894,7 @@ async function deleteEvent() {
   const detail = event.recurringEventId ? 'Будет удалён только этот экземпляр повторяющегося события.' : 'Это действие нельзя отменить.';
   const confirmed = await confirmAction('Удалить событие?', `«${subject}» из календаря «${calendar?.summary || event.calendarId}».\n${detail}`, 'Удалить событие');
   if (!confirmed) return;
-  state.mutationInProgress = true;
+  beginEventMutation();
   const button = $('#deleteEventButton');
   button.disabled = true;
   button.textContent = 'Удаление…';
@@ -948,6 +979,9 @@ async function init() {
   bindEvents(); renderConnection(); updateHeading();
   if (state.auth.signedIn) await loadCalendars();
   renderSettings(); renderCalendarFilters(); renderConnection(); await loadEvents();
+  setInterval(() => {
+    if (document.visibilityState === 'visible') refreshFromOtherDevices();
+  }, 30000);
 }
 
 function bindEvents() {
@@ -1018,6 +1052,7 @@ function bindEvents() {
   $('#importButton').addEventListener('click', importCredentials);
   $('#signInButton').addEventListener('click', signIn);
   $('#signOutButton').addEventListener('click', async () => {
+    ++eventsRequestId;
     await window.calendarApp.signOut(); state.auth.signedIn = false; state.calendars = []; state.events = []; state.archivedEvents = []; state.archiveAccountId = ''; renderSettings(); renderCalendarFilters(); renderConnection(); renderEvents();
   });
   $('#reloadCalendarsButton').addEventListener('click', async () => { await loadCalendars(); await loadEvents(); });
@@ -1028,6 +1063,11 @@ function bindEvents() {
     await saveSettings(); await loadEvents();
   }));
   window.calendarApp.onNavigate((page) => leaveEditor(page));
+  window.calendarApp.onSyncRefresh(refreshFromOtherDevices);
+  window.addEventListener('online', refreshFromOtherDevices);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshFromOtherDevices();
+  });
 }
 
 init().catch((error) => showError(messageFrom(error)));

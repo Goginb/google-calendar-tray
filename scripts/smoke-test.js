@@ -257,75 +257,38 @@ async function main() {
     if (!contacts.bookOpened || !contacts.addFormHiddenByDefault || contacts.persistedCount !== 58 || !contacts.savedContact || !contacts.igorMatches || !contacts.popupAnchored || !contacts.enterSelected || !contacts.reverseNameMatches || !contacts.suggestionVisible || contacts.attendees[0]?.email !== 'colleague@example.com' || !contacts.bookSelectVisible || !contacts.guestKept || contacts.guessedName !== 'Jane Doe' || !contacts.newContactSelected || contacts.rememberedCount !== 60) throw new Error('Адресная книга или выбор гостей не работают');
     const archive = JSON.parse(await evaluate(renderer.webSocketDebuggerUrl, `(async () => {
       state.archiveAccountId = 'smoke-account';
-      state.settings.viewMode = 'today';
-      state.anchorDate = null;
-      const start = new Date();
-      const yesterday = new Date(start.getFullYear(), start.getMonth(), start.getDate() - 1);
-      const yesterdayDate = localDate(yesterday);
-      state.archivedEvents = await window.calendarApp.archiveEvent(state.archiveAccountId, {
-        id: 'older-completed', calendarId: 'visible', summary: 'Вчерашнее событие', start: { date: yesterdayDate }
-      });
-      state.events = [{ id: 'archive-check', calendarId: 'visible', summary: 'Завершённая встреча', start: { dateTime: start.toISOString() }, end: { dateTime: new Date(start.getTime() + 3600000).toISOString() } }];
+      state.settings.viewMode = 'today'; state.settings.showCompletedEvents = false;
+      state.settings.selectedCalendarIds = ['visible', 'readonly']; state.anchorDate = null;
+      const day = localDate(new Date());
+      const yesterday = new Date(day + 'T00:00'); yesterday.setDate(yesterday.getDate() - 1);
+      const current = { id: 'done', calendarId: 'visible', summary: 'Выполненная встреча', description: 'Комментарий', start: { dateTime: new Date(day + 'T09:00').toISOString() }, end: { dateTime: new Date(day + 'T10:00').toISOString() } };
+      state.events = [current];
+      state.archivedEvents = [
+        { ...current, eventId: current.id, archivedAt: new Date().toISOString() },
+        { calendarId: 'visible', eventId: 'older', summary: 'Вчера', start: { date: localDate(yesterday) }, archivedAt: new Date().toISOString() }
+      ];
       showPage('calendar'); renderConnection(); renderEvents();
-      const before = document.querySelectorAll('#eventsList .event-row').length;
-      const initialCount = document.querySelector('#archiveCount').textContent;
-      document.querySelector('#eventsList .complete-button').click();
-      const confirmationVisible = !document.querySelector('#confirmDialog').classList.contains('hidden');
-      for (let i = 0; i < 50 && state.archivedEvents.length !== 2; i++) await new Promise((resolve) => setTimeout(resolve, 20));
-      const hiddenFromMain = document.querySelectorAll('#eventsList .event-row').length === 0;
+      const hiddenCompleted = document.querySelectorAll('#eventsList .event-row').length === 0;
       const todayCount = document.querySelector('#archiveCount').textContent;
       document.querySelector('#archiveButton').click();
       const archiveVisible = document.querySelectorAll('#archiveList .archive-card').length === 1;
-      document.querySelector('#archiveList .link-button').click();
-      for (let i = 0; i < 50 && state.archivedEvents.length !== 1; i++) await new Promise((resolve) => setTimeout(resolve, 20));
-      const restored = document.querySelectorAll('#eventsList .event-row').length === 1 && document.querySelectorAll('#archiveList .archive-card').length === 0;
-      const restoredCount = document.querySelector('#archiveCount').textContent;
       state.anchorDate = yesterday; renderEvents(); renderArchive();
       const yesterdayCount = document.querySelector('#archiveCount').textContent;
       const yesterdayVisible = document.querySelectorAll('#archiveList .archive-card').length === 1;
-      return JSON.stringify({ before, initialCount, confirmationVisible, hiddenFromMain, todayCount, archiveVisible, restored, restoredCount, yesterdayCount, yesterdayVisible });
-    })()`));
-    if (archive.before !== 1 || archive.initialCount !== '0' || archive.confirmationVisible || !archive.hiddenFromMain || archive.todayCount !== '1' || !archive.archiveVisible || !archive.restored || archive.restoredCount !== '0' || archive.yesterdayCount !== '1' || !archive.yesterdayVisible) throw new Error('Архивирование, дневной счётчик или восстановление не работает');
-    const showAllEvents = JSON.parse(await evaluate(renderer.webSocketDebuggerUrl, `(async () => {
-      state.anchorDate = null;
-      state.settings.viewMode = 'today';
-      state.settings.selectedCalendarIds = ['visible', 'readonly'];
-      state.settings.showCompletedEvents = false;
-      const day = localDate(new Date());
-      const nextDay = new Date(day + 'T00:00'); nextDay.setDate(nextDay.getDate() + 1);
-      state.events = [
-        { id: 'same-done', calendarId: 'visible', summary: 'Первая выполненная', description: 'Комментарий', start: { dateTime: new Date(day + 'T09:00').toISOString() }, end: { dateTime: new Date(day + 'T10:00').toISOString() } },
-        { id: 'same-done', calendarId: 'readonly', summary: 'Вторая выполненная', start: { dateTime: new Date(day + 'T11:00').toISOString() }, end: { dateTime: new Date(day + 'T12:00').toISOString() } },
-        { id: 'all-day-done', calendarId: 'visible', summary: 'Весь день выполнено', start: { date: day }, end: { date: localDate(nextDay) } }
-      ];
-      for (const event of state.events) state.archivedEvents = await window.calendarApp.archiveEvent(state.archiveAccountId, event);
-      showPage('calendar'); renderCalendarFilters(); renderConnection(); renderEvents();
-      const hiddenInitially = document.querySelectorAll('#eventsList .event-row').length === 0;
+      state.anchorDate = null; showPage('calendar'); renderEvents();
       document.querySelector('#showAllEvents').click();
-      for (let i = 0; i < 50 && document.querySelector('#showAllEvents').disabled; i++) await new Promise((resolve) => setTimeout(resolve, 20));
-      const shownCompleted = document.querySelectorAll('#eventsList .completed-event').length;
+      for (let i = 0; i < 100 && document.querySelector('#showAllEvents').disabled; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+      const completedVisible = !!document.querySelector('.completed-event .has-description');
+      const completedCannotDrag = !document.querySelector('.completed-event.draggable-event');
       const savedPreference = (await window.calendarApp.getInitialState()).settings.showCompletedEvents;
-      const before = Number(document.querySelector('#archiveCount').textContent);
-      const completedCannotDrag = !document.querySelector('#eventsList .completed-event.draggable-event') && !document.querySelector('#eventsList .completed-event .event-resize-handle');
-      document.querySelector('#eventsList [data-calendar-id=visible][data-event-id=same-done] .restore-button').click();
-      for (let i = 0; i < 50 && state.mutationInProgress; i++) await new Promise((resolve) => setTimeout(resolve, 20));
-      const restoredFirst = !!document.querySelector('#eventsList [data-calendar-id=visible][data-event-id=same-done].draggable-event') && !!document.querySelector('#eventsList [data-calendar-id=readonly][data-event-id=same-done].completed-event') && Number(document.querySelector('#archiveCount').textContent) === before - 1;
-      document.querySelector('#eventsList [data-event-id=all-day-done] .restore-button').click();
-      for (let i = 0; i < 50 && state.mutationInProgress; i++) await new Promise((resolve) => setTimeout(resolve, 20));
-      const restoredAllDay = !!document.querySelector('#eventsList [data-event-id=all-day-done]:not(.completed-event)');
-      document.querySelector('#showAllEvents').click();
-      for (let i = 0; i < 50 && document.querySelector('#showAllEvents').disabled; i++) await new Promise((resolve) => setTimeout(resolve, 20));
-      const visibleAfterHiding = document.querySelectorAll('#eventsList .event-row').length;
-      document.querySelector('#showAllEvents').click();
-      for (let i = 0; i < 50 && document.querySelector('#showAllEvents').disabled; i++) await new Promise((resolve) => setTimeout(resolve, 20));
-      document.querySelector('#eventsList [data-calendar-id=readonly][data-event-id=same-done] .restore-button').click();
-      for (let i = 0; i < 50 && state.mutationInProgress; i++) await new Promise((resolve) => setTimeout(resolve, 20));
-      const persistedArchive = await window.calendarApp.listArchive(state.archiveAccountId);
-      const restoredReadonly = !persistedArchive.some((entry) => entry.calendarId === 'readonly' && entry.eventId === 'same-done') && !!document.querySelector('#eventsList [data-calendar-id=readonly][data-event-id=same-done] .event-card.readonly');
-      return JSON.stringify({ hiddenInitially, shownCompleted, savedPreference, completedCannotDrag, restoredFirst, restoredAllDay, visibleAfterHiding, restoredReadonly, remainingCompleted: document.querySelectorAll('#eventsList .completed-event').length });
+      document.querySelector('.restore-button').click();
+      for (let i = 0; i < 100 && state.mutationInProgress; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+      const restoreFailureKeptArchive = state.archivedEvents.length === 2 && !!document.querySelector('.completed-event') && !document.querySelector('.restore-button').disabled;
+      const errorShown = !document.querySelector('#errorState').classList.contains('hidden');
+      return JSON.stringify({ hiddenCompleted, todayCount, archiveVisible, yesterdayCount, yesterdayVisible, completedVisible, completedCannotDrag, savedPreference, restoreFailureKeptArchive, errorShown });
     })()`));
-    if (!showAllEvents.hiddenInitially || showAllEvents.shownCompleted !== 3 || !showAllEvents.savedPreference || !showAllEvents.completedCannotDrag || !showAllEvents.restoredFirst || !showAllEvents.restoredAllDay || showAllEvents.visibleAfterHiding !== 2 || !showAllEvents.restoredReadonly || showAllEvents.remainingCompleted !== 0) throw new Error('Показ всех событий или отдельное восстановление выполненных не работает: ' + JSON.stringify(showAllEvents));
-    console.log('Smoke OK:', { ...state, navigation, interaction, reschedule, contacts, archive, showAllEvents });
+    if (!archive.hiddenCompleted || archive.todayCount !== '1' || !archive.archiveVisible || archive.yesterdayCount !== '1' || !archive.yesterdayVisible || !archive.completedVisible || !archive.completedCannotDrag || !archive.savedPreference || !archive.restoreFailureKeptArchive || !archive.errorShown) throw new Error('Интерфейс выполненных или обработка недоступной синхронизации не работает: ' + JSON.stringify(archive));
+    console.log('Smoke OK:', { ...state, navigation, interaction, reschedule, contacts, archive });
   } finally {
     if (child.pid) {
       spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });

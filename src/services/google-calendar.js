@@ -6,6 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { URL } = require('node:url');
 const { google } = require('googleapis');
+const { isSyncCalendar } = require('../lib/completion-records');
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar'];
 
@@ -161,10 +162,20 @@ class GoogleCalendarService {
     return google.calendar({ version: 'v3', auth: client });
   }
 
-  async listCalendars() {
+  async listCalendarEntries({ showHidden = false } = {}) {
     const api = this.getCalendarApi();
-    const result = await api.calendarList.list({ maxResults: 250 });
-    return (result.data.items || []).map((calendar) => ({
+    const entries = [];
+    let pageToken;
+    do {
+      const result = await api.calendarList.list({ maxResults: 250, showHidden, ...(pageToken ? { pageToken } : {}) });
+      entries.push(...(result.data.items || []));
+      pageToken = result.data.nextPageToken;
+    } while (pageToken);
+    return entries;
+  }
+
+  async listCalendars() {
+    return (await this.listCalendarEntries()).filter((calendar) => !isSyncCalendar(calendar)).map((calendar) => ({
       id: calendar.id,
       summary: calendar.summaryOverride || calendar.summary || calendar.id,
       primary: Boolean(calendar.primary),
@@ -178,15 +189,17 @@ class GoogleCalendarService {
   async listEvents({ calendarIds, timeMin, timeMax }) {
     const api = this.getCalendarApi();
     const results = await Promise.all(calendarIds.map(async (calendarId) => {
-      const response = await api.events.list({
-        calendarId,
-        timeMin,
-        timeMax,
-        singleEvents: true,
-        orderBy: 'startTime',
-        maxResults: 2500
-      });
-      return (response.data.items || []).map((event) => ({ ...event, calendarId }));
+      const events = [];
+      let pageToken;
+      do {
+        const response = await api.events.list({
+          calendarId, timeMin, timeMax, singleEvents: true, orderBy: 'startTime', maxResults: 2500,
+          ...(pageToken ? { pageToken } : {})
+        });
+        events.push(...(response.data.items || []).map((event) => ({ ...event, calendarId })));
+        pageToken = response.data.nextPageToken;
+      } while (pageToken);
+      return events;
     }));
     return results.flat().sort((a, b) => {
       const left = a.start?.dateTime || a.start?.date || '';

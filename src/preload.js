@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('calendarApp', {
   updateEvent: (args) => ipcRenderer.invoke('events:update', args),
   deleteEvent: (args) => ipcRenderer.invoke('events:delete', args),
   listArchive: (accountId) => ipcRenderer.invoke('archive:list', accountId),
+  listCachedArchive: (accountId) => ipcRenderer.invoke('archive:cached', accountId),
   archiveEvent: (accountId, event) => ipcRenderer.invoke('archive:add', accountId, event),
   restoreArchivedEvent: (accountId, calendarId, eventId) => ipcRenderer.invoke('archive:restore', accountId, calendarId, eventId),
   listContacts: () => ipcRenderer.invoke('contacts:list'),
@@ -22,5 +23,6 @@ contextBridge.exposeInMainWorld('calendarApp', {
   removeContact: (email) => ipcRenderer.invoke('contacts:remove', email),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   hideWindow: () => ipcRenderer.send('window:hide'),
-  onNavigate: (callback) => ipcRenderer.on('navigate', (_event, page) => callback(page))
+  onNavigate: (callback) => ipcRenderer.on('navigate', (_event, page) => callback(page)),
+  onSyncRefresh: (callback) => ipcRenderer.on('sync-refresh', () => callback())
 });

@@ -1,6 +1,6 @@
 {
   "name": "google-calendar-tray",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "description": "Компактный клиент Google Calendar для системного трея Windows",
   "main": "src/main.js",
   "author": "Local project",
@@ -8,7 +8,7 @@
   "private": true,
   "scripts": {
     "start": "npm run icons && electron .",
-    "test": "node --test test/calendar-utils.test.js test/config-store.test.js test/archive-store.test.js test/contact-store.test.js test/google-calendar-service.test.js test/tray-clicks.test.js test/timeline-utils.test.js",
+    "test": "node --test test/calendar-utils.test.js test/config-store.test.js test/archive-store.test.js test/completion-sync.test.js test/contact-store.test.js test/google-calendar-service.test.js test/tray-clicks.test.js test/timeline-utils.test.js",
     "smoke": "node scripts/smoke-test.js",
     "smoke:timeline": "node scripts/timeline-smoke-test.js",
     "icons": "node scripts/generate-icon.js",

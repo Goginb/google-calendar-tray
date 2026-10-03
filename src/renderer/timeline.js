@@ -141,7 +141,7 @@ function timelineIsWritable(event) {
 async function saveTimelineChange(event, resource, kind) {
   if (!timelineIsWritable(event)) return;
   if (new Date(resource.start.dateTime).getTime() === new Date(event.start.dateTime).getTime() && new Date(resource.end.dateTime).getTime() === new Date(event.end.dateTime).getTime()) return;
-  state.mutationInProgress = true;
+  beginEventMutation();
   const list = $('#eventsList'); list.classList.add('is-saving'); list.setAttribute('aria-busy', 'true');
   $('#timelineHelp').textContent = 'Сохраняю время в Google Calendar…';
   try {

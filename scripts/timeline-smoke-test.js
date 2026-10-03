@@ -16,6 +16,8 @@ if (!process.versions.electron) {
   const { app, BrowserWindow, ipcMain } = require('electron');
   const { ArchiveStore } = require('../src/services/archive-store');
   const { ConfigStore } = require('../src/services/config-store');
+  const { CompletionSync } = require('../src/services/completion-sync');
+  const { createRemoteCalendar } = require('../test/helpers/completion-api');
   const testData = fs.mkdtempSync(path.join(os.tmpdir(), 'calendar-timeline-smoke-'));
   app.setPath('userData', testData);
   const archiveStore = new ArchiveStore(testData);
@@ -26,6 +28,8 @@ if (!process.versions.electron) {
   let failUpdate = false;
   let failRestore = false;
   let failSettings = false;
+  let delayedArchiveRead = null;
+  let archiveReadWaiting = false;
   let events;
   const date = '2026-10-05';
   const timed = (id, title, start, end, calendarId = 'team') => ({
@@ -50,6 +54,10 @@ if (!process.versions.electron) {
     { id: 'work', summary: 'Проекты', accessRole: 'writer', backgroundColor: '#34a853' },
     { id: 'readonly', summary: 'Общий календарь', accessRole: 'reader', backgroundColor: '#b58aff' }
   ];
+  const remote = createRemoteCalendar('team');
+  remote.calendars = calendars.map((calendar) => ({ ...calendar }));
+  const completionSync = new CompletionSync(remote.service(), archiveStore);
+  const otherDevice = new CompletionSync(remote.service(), new ArchiveStore(path.join(testData, 'other-device')));
   const settings = { viewMode: 'today', selectedCalendarIds: calendars.map((calendar) => calendar.id), calendarSelectionInitialized: true };
   configStore.setPublicSettings(settings);
   ipcMain.handle('app:get-initial-state', () => ({ auth: { signedIn: true, credentialsConfigured: true }, settings: configStore.getPublicSettings(), appVersion: 'test', trayReady: false, windowVisible: false }));
@@ -59,11 +67,17 @@ if (!process.versions.electron) {
     return configStore.setPublicSettings(value);
   });
   ipcMain.handle('contacts:list', () => []);
-  ipcMain.handle('archive:list', (_event, accountId) => archiveStore.list(accountId));
-  ipcMain.handle('archive:add', (_event, accountId, event) => archiveStore.archive(accountId, event));
+  ipcMain.handle('contacts:remember', () => []);
+  ipcMain.handle('archive:cached', (_event, accountId) => archiveStore.list(accountId));
+  ipcMain.handle('archive:list', async (_event, accountId) => {
+    const result = await completionSync.list(accountId);
+    if (delayedArchiveRead) { archiveReadWaiting = true; await delayedArchiveRead; }
+    return result;
+  });
+  ipcMain.handle('archive:add', (_event, accountId, event) => completionSync.archive(accountId, event));
   ipcMain.handle('archive:restore', (_event, accountId, calendarId, eventId) => {
     if (failRestore) throw new Error('Тестовая ошибка восстановления');
-    return archiveStore.restore(accountId, calendarId, eventId);
+    return completionSync.restore(accountId, calendarId, eventId);
   });
   ipcMain.handle('events:list', (_event, args) => events.filter((event) => {
     const start = new Date(event.start.dateTime || `${event.start.date}T00:00`);
@@ -80,8 +94,9 @@ if (!process.versions.electron) {
   });
   function check(condition, message) { if (!condition) throw new Error(message); }
   const evaluate = (expression) => win.webContents.executeJavaScript(expression);
-  async function waitFor(expression) {
-    for (let i = 0; i < 100; i++) { if (await evaluate(expression)) return; await delay(20); }
+  async function waitFor(expression, timeout = 2000) {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) { if (await evaluate(expression)) return; await delay(20); }
     throw new Error(`Таймлайн не готов: ${expression}`);
   }
   async function point(selector, offsetY) {
@@ -252,6 +267,44 @@ if (!process.versions.electron) {
       failSettings = false;
       await click('.all-day-events [data-event-id="all-day"] .restore-button');
       check(archiveStore.list('team').length === 0 && await evaluate('document.querySelectorAll(".completed-event").length === 0'), 'Событие на весь день не возвращается из выполненных');
+      await otherDevice.archive('team', events.find((event) => event.id === 'readonly'));
+      await evaluate('refreshFromOtherDevices()');
+      check(await evaluate('document.querySelector(".timeline-event[data-event-id=readonly].completed-event") && state.archivedEvents.length === 1'), 'Отметка другого устройства не появилась при фоновом обновлении');
+      remote.failRead = true;
+      await evaluate('refreshFromOtherDevices()');
+      check(await evaluate('state.events.length === 5 && state.archivedEvents.length === 1 && document.querySelector(".timeline-event[data-event-id=readonly].completed-event")'), 'Сбой связи стирает события или отметки');
+      remote.failRead = false;
+      await otherDevice.restore('team', 'readonly', 'readonly');
+      win.webContents.send('sync-refresh');
+      await waitFor('!eventRequestsInFlight && state.archivedEvents.length === 0');
+      check(await evaluate('document.querySelector(".timeline-event[data-event-id=readonly]:not(.completed-event)")'), 'Возврат с другого устройства не подхватился при открытии окна');
+      await evaluate(`openEditor(state.events.find((event) => event.id === 'a'))`);
+      await otherDevice.archive('team', events.find((event) => event.id === 'a'));
+      await evaluate('refreshFromOtherDevices()');
+      check(await evaluate('state.archivedEvents.length === 0 && !document.querySelector("#editorPage").classList.contains("hidden")'), 'Фоновое обновление мешает редактированию');
+      await evaluate('showPage("calendar"); refreshFromOtherDevices()');
+      check(await evaluate('state.archivedEvents.length === 1'), 'Изменение другого устройства потерялось после выхода из редактора');
+      await otherDevice.restore('team', 'team', 'a');
+      await evaluate('refreshFromOtherDevices()');
+      await otherDevice.archive('team', events.find((event) => event.id === 'c'));
+      await waitFor('state.archivedEvents.some((entry) => entry.eventId === "c")', 32000);
+      check(await evaluate('document.querySelector(".timeline-event[data-event-id=c].completed-event")'), 'Автоматическое обновление каждые 30 секунд не работает');
+      await otherDevice.restore('team', 'team', 'c');
+      await evaluate('refreshFromOtherDevices()');
+      let releaseArchiveRead;
+      delayedArchiveRead = new Promise((resolve) => { releaseArchiveRead = resolve; });
+      await evaluate('void refreshFromOtherDevices()');
+      for (let attempt = 0; attempt < 100 && !archiveReadWaiting; attempt++) await delay(10);
+      check(archiveReadWaiting, 'Не удалось задержать фоновый ответ');
+      await click(`${row('a')} .complete-button`);
+      delayedArchiveRead = null; releaseArchiveRead();
+      await waitFor('!eventRequestsInFlight');
+      check(await evaluate('state.archivedEvents.length === 1 && document.querySelector(".timeline-event[data-event-id=a].completed-event")'), 'Старый фоновый ответ отменяет новую отметку выполнения');
+      await otherDevice.restore('team', 'team', 'a');
+      await evaluate('refreshFromOtherDevices()');
+      await evaluate(`openEditor(state.events.find((event) => event.id === 'a')); document.querySelector('#eventSummary').value = 'Изменено после синхронизации'; document.querySelector('#eventForm').requestSubmit()`);
+      await waitFor('!state.mutationInProgress && !state.loading');
+      check(await evaluate('state.events.some((event) => event.id === "a" && event.summary === "Изменено после синхронизации") && document.querySelector("#editorPage").classList.contains("hidden")'), 'Сохранение в редакторе не обновляет события после синхронизации');
       const addButtonAboveEvents = await evaluate(`(() => {
         state.events = [${JSON.stringify(timed('fab-overlap', 'Событие под кнопкой добавления', '09:00', '10:00'))}];
         hideError(); renderEvents(); document.querySelector('#toast').classList.add('hidden');
@@ -270,7 +323,7 @@ if (!process.versions.electron) {
       await click('#addButton');
       await waitFor('!document.querySelector("#editorPage").classList.contains("hidden")');
       check(await evaluate('state.editingEvent === null'), 'Кнопка добавления над событием открывает его редактор вместо нового события');
-      console.log('Timeline smoke OK:', { geometry, updates: calls.length, movedAcrossDays: true, resizeMinimum: 15, cancelled: true, failedUpdateRestored: true, autoScroll: true, clickOpensEditor: true, keyboard: true, sticky, showCompleted: true, restoreByMouse: true, restoreFailureKeptArchive: true, savedVisibility: true, addButtonAboveEvents });
+      console.log('Timeline smoke OK:', { geometry, updates: calls.length, movedAcrossDays: true, resizeMinimum: 15, cancelled: true, failedUpdateRestored: true, autoScroll: true, clickOpensEditor: true, keyboard: true, sticky, showCompleted: true, restoreByMouse: true, restoreFailureKeptArchive: true, savedVisibility: true, secondDeviceCompletion: true, secondDeviceRestore: true, periodicSync: true, syncFailureKeptEvents: true, editorUninterrupted: true, staleResponseIgnored: true, editorSaveRefreshesEvents: true, addButtonAboveEvents });
       app.exit(0);
     } catch (error) {
       console.error(error.stack);
