@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'">
+  <title>Google Calendar Tray</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="toast" class="toast hidden" role="alert"></div>
+  <header class="titlebar">
+    <div class="brand"><span class="brand-icon">31</span><span>Календарь</span></div>
+    <div class="window-actions">
+      <button id="contactsButton" class="icon-button" title="Адресная книга" aria-label="Адресная книга">▤</button>
+      <button id="settingsButton" class="icon-button" title="Настройки" aria-label="Настройки">⚙</button>
+      <button id="closeButton" class="icon-button" title="Скрыть" aria-label="Скрыть">×</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="calendarPage" class="page">
+      <div class="toolbar">
+        <div class="segmented" role="group" aria-label="Период">
+          <button data-view="today" class="active">Сегодня</button>
+          <button data-view="week">Неделя</button>
+        </div>
+        <div class="toolbar-actions">
+          <button id="archiveButton" class="archive-button hidden" type="button" title="Показать выполненные события">✓ Выполнено <span id="archiveCount">0</span></button>
+          <button id="refreshButton" class="icon-button surface" title="Обновить" aria-label="Обновить">↻</button>
+        </div>
+      </div>
+
+      <div id="connectionBanner" class="banner hidden">
+        <strong>Подключите Google Calendar</strong>
+        <span>Импортируйте OAuth-файл и войдите в аккаунт.</span>
+        <button id="bannerSetupButton" class="primary">Настроить</button>
+      </div>
+
+      <details id="calendarFilters" class="calendar-filters hidden">
+        <summary class="filter-heading"><strong>Календари</strong><span id="calendarSelectionSummary" class="filter-selection-summary"></span><span class="filter-chevron" aria-hidden="true">⌄</span></summary>
+        <div class="filter-content">
+          <div class="filter-actions"><button id="reloadCalendarsButton" class="link-button" type="button">Обновить</button></div>
+          <div id="calendarList" class="calendar-list"><span class="muted">Загрузка календарей…</span></div>
+        </div>
+      </details>
+
+      <div class="date-navigation" role="group" aria-label="Навигация по датам">
+        <button id="previousDateButton" class="icon-button surface" type="button" aria-label="Предыдущий день" title="Предыдущий день">‹</button>
+        <div id="dateHeading" class="date-heading"></div>
+        <button id="nextDateButton" class="icon-button surface" type="button" aria-label="Следующий день" title="Следующий день">›</button>
+      </div>
+      <div class="date-shortcut"><button id="jumpTodayButton" class="jump-today hidden" type="button">К сегодня</button></div>
+      <div id="loadingState" class="loading hidden"><span class="spinner"></span>Загрузка событий…</div>
+      <div id="errorState" class="error hidden"></div>
+      <div id="eventsList" class="events-list"></div>
+      <div id="emptyState" class="empty hidden">
+        <div class="empty-mark">✓</div>
+        <strong id="emptyTitle">Свободно</strong>
+        <span id="emptyDescription">В этом периоде событий нет</span>
+      </div>
+      <button id="addButton" class="fab" title="Новое событие" aria-label="Новое событие">+</button>
+    </section>
+
+    <section id="archivePage" class="page hidden">
+      <div class="page-header">
+        <button id="archiveBackButton" class="icon-button surface" aria-label="Назад">←</button>
+        <div><h1>Выполнено</h1><p id="archivePeriod"></p><p>Личный архив. События в Google Calendar не меняются.</p></div>
+      </div>
+      <div id="archiveEmpty" class="empty hidden">
+        <div class="empty-mark">✓</div>
+        <strong>Архив пуст</strong>
+        <span id="archiveEmptyDescription">За выбранный день выполненных событий нет</span>
+      </div>
+      <div id="archiveList" class="archive-list"></div>
+    </section>
+
+    <section id="settingsPage" class="page hidden">
+      <div class="page-header">
+        <button id="settingsBackButton" class="icon-button surface" aria-label="Назад">←</button>
+        <div><h1>Настройки</h1><p>Подключение аккаунта</p></div>
+      </div>
+
+      <div class="settings-card">
+        <h2>Google OAuth</h2>
+        <div id="authStatus" class="status-row"></div>
+        <div id="oauthGuide" class="oauth-guide">
+          <strong>Зачем нужен JSON?</strong>
+          <p>Google не даёт календарным приложениям доступ к аккаунту без OAuth-клиента. Это одноразовая настройка, а не файл с вашими событиями или паролем.</p>
+          <ol>
+            <li>Включите Google Calendar API в своём проекте Google Cloud.</li>
+            <li>Создайте OAuth Client ID типа <b>Desktop app</b>.</li>
+            <li>Скачайте JSON и импортируйте его кнопкой ниже.</li>
+            <li>Нажмите «Войти через Google».</li>
+          </ol>
+          <button id="openGoogleCloudButton" class="secondary">Открыть Google Cloud</button>
+        </div>
+        <div class="button-row">
+          <button id="importButton" class="secondary">Импортировать JSON</button>
+          <button id="signInButton" class="primary">Войти через Google</button>
+          <button id="signOutButton" class="danger hidden">Выйти</button>
+        </div>
+      </div>
+
+      <div class="version" id="versionLabel"></div>
+    </section>
+
+    <section id="contactsPage" class="page hidden">
+      <div class="page-header">
+        <button id="contactsBackButton" class="icon-button surface" type="button" aria-label="Назад">←</button>
+        <div><h1>Адресная книга</h1><p>Контакты сохраняются на этом компьютере</p></div>
+      </div>
+      <input id="contactSearch" class="contact-search" type="search" autocomplete="off" placeholder="Найти по имени или почте" aria-label="Поиск контактов">
+      <div id="contactsList" class="contacts-list"></div>
+      <form id="contactForm" class="event-form contact-form hidden">
+        <strong id="contactFormTitle">Новый контакт</strong>
+        <label>Имя<input id="contactName" maxlength="200" placeholder="Необязательно"></label>
+        <label>Почта<input id="contactEmail" type="email" required maxlength="254" placeholder="name@example.com"></label>
+        <div id="contactError" class="error hidden"></div>
+        <div class="button-row"><button id="saveContactButton" class="primary" type="submit">Сохранить контакт</button><button id="cancelContactButton" class="secondary" type="button">Отмена</button></div>
+      </form>
+    </section>
+
+    <section id="editorPage" class="page hidden">
+      <div class="page-header">
+        <button id="editorBackButton" class="icon-button surface" aria-label="Назад">←</button>
+        <div><h1 id="editorTitle">Новое событие</h1><p id="editorSubtitle">Добавьте встречу или напоминание</p></div>
+      </div>
+      <form id="eventForm" class="event-form">
+        <label>Название<input id="eventSummary" required maxlength="1024" placeholder="Например, встреча с командой"></label>
+        <label>Календарь<select id="eventCalendar" required></select><span class="field-hint">Можно выбрать любой календарь с правом записи, даже если он скрыт на главной.</span></label>
+        <div class="guest-field">
+          <div class="guest-heading"><strong>Гости</strong><button id="openContactsButton" type="button" class="link-button">Все контакты</button></div>
+          <div id="guestChips" class="guest-chips"></div>
+          <div class="guest-combobox">
+            <input id="guestInput" type="text" autocomplete="off" placeholder="Введите имя или почту" aria-label="Поиск гостя" aria-controls="guestSuggestions" aria-expanded="false">
+            <div id="guestSuggestions" class="guest-suggestions hidden" role="listbox" aria-label="Найденные контакты"></div>
+          </div>
+          <span class="field-hint">Начните вводить имя — контакт появится в списке.</span>
+        </div>
+        <label class="check-row"><input id="eventAllDay" type="checkbox"><span>Весь день</span></label>
+        <div id="timedFields" class="form-grid">
+          <label>Начало<input id="eventStart" type="datetime-local" required></label>
+          <label>Окончание<input id="eventEnd" type="datetime-local" required></label>
+        </div>
+        <div id="allDayFields" class="form-grid hidden">
+          <label>Дата начала<input id="eventStartDate" type="date"></label>
+          <label>Дата окончания<input id="eventEndDate" type="date"></label>
+        </div>
+        <label>Место<input id="eventLocation" maxlength="1024" placeholder="Необязательно"></label>
+        <label>Описание<textarea id="eventDescription" rows="4" maxlength="8192" placeholder="Необязательно"></textarea></label>
+        <div id="formError" class="error hidden"></div>
+        <button id="saveEventButton" type="submit" class="primary wide">Создать событие</button>
+        <button id="deleteEventButton" type="button" class="danger wide hidden">Удалить событие</button>
+      </form>
+    </section>
+  </main>
+  <div id="eventContextMenu" class="event-context-menu hidden" role="menu" aria-label="Действия с событием">
+    <button id="rescheduleMenuItem" type="button" role="menuitem">Перенести на…</button>
+  </div>
+  <div id="rescheduleDialog" class="confirm-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="rescheduleTitle">
+    <div class="confirm-card">
+      <h2 id="rescheduleTitle">Перенести событие</h2>
+      <p id="rescheduleDescription">Длительность события сохранится.</p>
+      <form id="rescheduleForm" class="event-form">
+        <label>Новая дата<input id="rescheduleDate" type="date" required></label>
+        <label id="rescheduleTimeField">Новое время<input id="rescheduleTime" type="time" required></label>
+        <div id="rescheduleError" class="error hidden" role="alert"></div>
+        <div class="confirm-actions">
+          <button id="rescheduleCancelButton" type="button" class="secondary">Отмена</button>
+          <button id="rescheduleSaveButton" type="submit" class="primary">Перенести</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <div id="confirmDialog" class="confirm-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+    <div class="confirm-card">
+      <h2 id="confirmTitle"></h2>
+      <p id="confirmMessage"></p>
+      <div class="confirm-actions">
+        <button id="confirmCancelButton" type="button" class="secondary">Отмена</button>
+        <button id="confirmActionButton" type="button" class="danger">Подтвердить</button>
+      </div>
+    </div>
+  </div>
+  <script src="../lib/contact-utils.js"></script>
+  <script src="../lib/calendar-utils.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

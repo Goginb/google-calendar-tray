@@ -1,0 +1,52 @@
+{
+  "name": "google-calendar-tray",
+  "version": "1.0.16",
+  "description": "Компактный клиент Google Calendar для системного трея Windows",
+  "main": "src/main.js",
+  "author": "Local project",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "npm run icons && electron .",
+    "test": "node --test test/calendar-utils.test.js test/config-store.test.js test/archive-store.test.js test/contact-store.test.js test/google-calendar-service.test.js test/tray-clicks.test.js",
+    "smoke": "node scripts/smoke-test.js",
+    "icons": "node scripts/generate-icon.js",
+    "pack": "npm run icons && electron-builder --dir",
+    "dist": "npm run icons && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "googleapis": "^176.0.0"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
+    "sharp": "^0.35.4"
+  },
+  "build": {
+    "appId": "local.googlecalendar.tray",
+    "productName": "Google Calendar Tray",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true
+    }
+  }
+}
